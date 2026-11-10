@@ -664,7 +664,7 @@ async fn tools_list_includes_required_cache_fields_for_current_protocol() {
         let result: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(result["result"]["ttlMs"], 0, "{result}");
         assert_eq!(result["result"]["cacheScope"], "private", "{result}");
-        assert_eq!(result["result"]["tools"].as_array().unwrap().len(), 4);
+        assert_eq!(result["result"]["tools"].as_array().unwrap().len(), 5);
     }
 }
 
@@ -889,6 +889,134 @@ async fn sub_issues_can_be_created_listed_moved_and_detached_within_the_grant() 
         attached["result"]["structuredContent"]["parent_task_id"],
         f.task.to_string(),
         "{attached}"
+    );
+}
+
+#[tokio::test]
+async fn labels_can_be_listed_set_filtered_and_stay_in_the_grant() {
+    let f = Fixture::new().await;
+    sqlx::query("UPDATE api_tokens SET scopes = 'tasks:read tasks:write' WHERE id = $1")
+        .bind(f.token_id.to_string())
+        .execute(f.database.pool())
+        .await
+        .unwrap();
+    let label = |project, name: &str| {
+        let tasks = f.tasks.clone();
+        let (workspace, user, name) = (f.workspace, f.user, name.to_string());
+        async move {
+            tasks
+                .create_label(
+                    workspace,
+                    project,
+                    user,
+                    name,
+                    "#ff0000".into(),
+                    "test",
+                    TimestampMillis::now(),
+                )
+                .await
+                .unwrap()
+                .id
+        }
+    };
+    let bug = label(f.project, "bug").await;
+    let security = label(f.project, "security").await;
+    let hidden = label(f.other_project, "hidden").await;
+
+    let listed = f
+        .tool("list_labels", json!({"project_id": f.project}))
+        .await;
+    let items = listed["result"]["structuredContent"]["items"]
+        .as_array()
+        .unwrap();
+    assert_eq!(items.len(), 2, "{listed}");
+    let refused = f
+        .tool("list_labels", json!({"project_id": f.other_project}))
+        .await;
+    assert_eq!(refused["result"]["isError"], true, "{refused}");
+
+    let parent = f.tasks.get_task(f.workspace, f.task, f.user).await.unwrap();
+    let created = f
+        .tool(
+            "create_task",
+            json!({"project_id": f.project, "status_id": parent.status_id, "title": "Labelled", "label_ids": [bug]}),
+        )
+        .await;
+    let task = &created["result"]["structuredContent"];
+    assert_eq!(task["label_ids"], json!([bug.to_string()]), "{created}");
+    let task_id: Id = task["id"].as_str().unwrap().parse().unwrap();
+    // A label of another project is refused and creates nothing.
+    let foreign = f
+        .tool(
+            "create_task",
+            json!({"project_id": f.project, "status_id": parent.status_id, "title": "Foreign", "label_ids": [hidden]}),
+        )
+        .await;
+    assert_eq!(foreign["result"]["isError"], true, "{foreign}");
+
+    let current = f
+        .tasks
+        .get_task(f.workspace, task_id, f.user)
+        .await
+        .unwrap();
+    let foreign = f
+        .tool(
+            "update_task",
+            json!({"task_id": task_id, "expected_version": token_version(&current), "label_ids": [hidden]}),
+        )
+        .await;
+    assert_eq!(foreign["result"]["isError"], true, "{foreign}");
+    let updated = f
+        .tool(
+            "update_task",
+            json!({"task_id": task_id, "expected_version": token_version(&current), "label_ids": [security]}),
+        )
+        .await;
+    assert_eq!(
+        updated["result"]["structuredContent"]["label_ids"],
+        json!([security.to_string()]),
+        "{updated}"
+    );
+    // An update without label_ids keeps the labels.
+    let current = f
+        .tasks
+        .get_task(f.workspace, task_id, f.user)
+        .await
+        .unwrap();
+    let renamed = f
+        .tool(
+            "update_task",
+            json!({"task_id": task_id, "expected_version": token_version(&current), "title": "Renamed"}),
+        )
+        .await;
+    assert_eq!(
+        renamed["result"]["structuredContent"]["label_ids"],
+        json!([security.to_string()]),
+        "{renamed}"
+    );
+
+    let filtered = f.tool("list_tasks", json!({"label_id": security})).await;
+    let items = filtered["result"]["structuredContent"]["items"]
+        .as_array()
+        .unwrap();
+    assert_eq!(items.len(), 1, "{filtered}");
+    assert_eq!(items[0]["id"], task_id.to_string());
+
+    let current = f
+        .tasks
+        .get_task(f.workspace, task_id, f.user)
+        .await
+        .unwrap();
+    let cleared = f
+        .tool(
+            "update_task",
+            json!({"task_id": task_id, "expected_version": token_version(&current), "label_ids": []}),
+        )
+        .await;
+    assert_eq!(
+        cleared["result"]["structuredContent"]["label_ids"],
+        json!([]),
+        "{cleared}"
     );
 }
 

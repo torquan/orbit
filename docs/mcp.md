@@ -205,11 +205,12 @@ scripts, CI jobs and the Orbit CLI. That API serves tasks and docs, not chat. Se
 | Tool | Arguments | Result |
 | --- | --- | --- |
 | `list_projects` | None | Approved live projects only. |
-| `list_tasks` | Optional `project_id`, `query`, `parent_task_id`, `cursor`, `limit` | Tasks and `next_cursor`. |
+| `list_tasks` | Optional `project_id`, `query`, `parent_task_id`, `label_id`, `cursor`, `limit` | Tasks and `next_cursor`. |
+| `list_labels` | Required `project_id`; optional `cursor`, `limit` | Labels of one approved project and `next_cursor`. |
 | `get_task` | Required `task_id` | One task in an approved project. |
 
 `list_tasks` searches titles and descriptions. `parent_task_id` (a task ID or an identifier
-such as `ENG-12`) lists only the direct sub-issues of that task. The default limit is 50; the valid
+such as `ENG-12`) lists only the direct sub-issues of that task. `label_id` lists only tasks with that label. The default limit is 50; the valid
 range is 1–100. Results include completed tasks and sub-issues, but not deleted
 tasks or tasks in deleted projects. Copy `next_cursor` into the next request and
 keep the same project and search query.
@@ -292,15 +293,17 @@ Service-account tokens support tasks only; docs and chat require a personal iden
 
 | Permission | Tools |
 | --- | --- |
-| Task read | `list_projects`, `list_tasks`, `get_task`, `list_task_statuses` |
+| Task read | `list_projects`, `list_tasks`, `get_task`, `list_task_statuses`, `list_labels` |
 | Task write | `create_task`, `update_task`, `delete_task` |
 | Docs read | `list_docs`, `get_doc` |
 | Docs write | `create_doc`, `update_doc` |
 | Chat read | `list_conversations`, `list_messages`, `get_thread`, `search_messages` |
 
 Task create takes `project_id`, `status_id`, `title`, optional markdown `description`,
-`priority` and `parent_task_id` (creates a sub-issue). Task update takes `task_id`,
-`expected_version`, and optional title, description, status, priority or `parent_task_id`:
+`priority`, `parent_task_id` (creates a sub-issue) and `label_ids` (labels of the task's
+project, from `list_labels`). Task update takes `task_id`,
+`expected_version`, and optional title, description, status, priority, `label_ids` (replaces
+all labels; `[]` removes them) or `parent_task_id`:
 a task ID or identifier moves the task under that task, and `null` detaches it. A task
 cannot become a sub-issue of itself or of its own sub-issues. Delete takes `task_id` and `expected_version` and moves the task subtree
 to the trash for 30 days. With `permanent: true` it deletes the subtree forever instead, with

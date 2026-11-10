@@ -158,6 +158,8 @@ struct ListTasksArgs {
     query: Option<String>,
     /// Only the direct sub-issues of this task: its id, or its identifier such as ENG-12.
     parent_task_id: Option<String>,
+    /// Only tasks with this label (an id from list_labels).
+    label_id: Option<String>,
     /// Continue from the next_cursor of the previous response.
     cursor: Option<String>,
     /// Maximum number of tasks, from 1 to 100. Default: 50.
@@ -197,6 +199,9 @@ struct CreateArgs {
     priority: String,
     /// Creates the task as a sub-issue of this task: its id, or its identifier such as ENG-12.
     parent_task_id: Option<String>,
+    /// Labels of the task's project, as ids from list_labels.
+    #[serde(default)]
+    label_ids: Vec<String>,
 }
 fn default_priority() -> String {
     "none".into()
@@ -214,6 +219,8 @@ struct UpdateArgs {
     /// `null` detaches the task from its parent.
     #[serde(default, deserialize_with = "present")]
     parent_task_id: Option<Option<String>>,
+    /// Replaces all labels of the task: ids from list_labels of its project. `[]` removes them.
+    label_ids: Option<Vec<String>>,
 }
 /// A field that is present, `null` included: `null` clears the value, a missing field keeps it.
 fn present<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(
@@ -328,12 +335,12 @@ fn tools() -> Vec<Tool> {
     vec![
         write_definition::<CreateArgs>(
             "create_task",
-            "Create a task in an approved project. With parent_task_id, the task is a sub-issue of that task.",
+            "Create a task in an approved project. With parent_task_id, the task is a sub-issue of that task. label_ids come from list_labels.",
             false,
         ),
         write_definition::<UpdateArgs>(
             "update_task",
-            "Update a task using its current version. parent_task_id moves the task under another task; null detaches it. Related task projects must also be approved.",
+            "Update a task using its current version. parent_task_id moves the task under another task; null detaches it. label_ids replaces all labels. Related task projects must also be approved.",
             true,
         ),
         write_definition::<DeleteArgs>(
@@ -366,6 +373,10 @@ fn tools() -> Vec<Tool> {
             "list_task_statuses",
             "List workflow statuses in an approved project, including IDs needed to create tasks.",
         ),
+        definition::<StatusArgs>(
+            "list_labels",
+            "List the labels of an approved project, including IDs needed to label tasks.",
+        ),
         definition::<EmptyArgs>(
             "list_projects",
             "List the projects approved for this connection.",
@@ -396,6 +407,10 @@ fn principal(context: &RequestContext<RoleServer>) -> Result<&ApiTokenPrincipal,
 fn parse_id(raw: &str) -> Result<Id, ErrorData> {
     raw.parse()
         .map_err(|_| ErrorData::invalid_params("Invalid identifier", None))
+}
+
+fn parse_ids(raw: &[String]) -> Result<Vec<Id>, ErrorData> {
+    raw.iter().map(|id| parse_id(id)).collect()
 }
 
 impl ServerHandler for TaskTools {
@@ -452,6 +467,7 @@ impl TaskTools {
             "create_task" => {
                 let a: CreateArgs = arguments(&request)?;
                 let (project_id, status_id) = (parse_id(&a.project_id)?, parse_id(&a.status_id)?);
+                let label_ids = parse_ids(&a.label_ids)?;
                 async {
                     let parent_task_id = api.optional_task_id(a.parent_task_id.as_deref()).await?;
                     api.create_task(NewTask {
@@ -461,7 +477,7 @@ impl TaskTools {
                         description: a.description,
                         priority: a.priority,
                         assignee_ids: vec![],
-                        label_ids: vec![],
+                        label_ids,
                         parent_task_id,
                         due_start_at: None,
                         due_at: None,
@@ -474,6 +490,7 @@ impl TaskTools {
             "update_task" => {
                 let a: UpdateArgs = arguments(&request)?;
                 let status_id = a.status_id.as_deref().map(parse_id).transpose()?;
+                let label_ids = a.label_ids.as_deref().map(parse_ids).transpose()?;
                 async {
                     let parent_task_id = match a.parent_task_id {
                         Some(parent) => Some(api.optional_task_id(parent.as_deref()).await?),
@@ -484,6 +501,7 @@ impl TaskTools {
                         description: a.description,
                         status_id,
                         priority: a.priority,
+                        label_ids,
                         parent_task_id,
                         ..Default::default()
                     };
@@ -566,6 +584,12 @@ impl TaskTools {
                     .await
                     .map(|page| json!({"items": page.items, "next_cursor": page.next_cursor}))
             }
+            "list_labels" => {
+                let a: StatusArgs = arguments(&request)?;
+                api.labels(parse_id(&a.project_id)?, a.cursor.as_deref(), a.limit)
+                    .await
+                    .map(|page| json!({"items": page.items, "next_cursor": page.next_cursor}))
+            }
             "list_projects" => {
                 let _: EmptyArgs = arguments(&request)?;
                 api.projects()
@@ -575,10 +599,12 @@ impl TaskTools {
             "list_tasks" => {
                 let a: ListTasksArgs = arguments(&request)?;
                 let project_id = a.project_id.as_deref().map(parse_id).transpose()?;
+                let label_id = a.label_id.as_deref().map(parse_id).transpose()?;
                 async {
                     api.list_tasks(TaskQuery {
                         project_id,
                         query: a.query,
+                        label_id,
                         parent_task_id: api.optional_task_id(a.parent_task_id.as_deref()).await?,
                         cursor: a.cursor,
                         limit: a.limit,
