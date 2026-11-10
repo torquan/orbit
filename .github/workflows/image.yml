@@ -2,7 +2,7 @@ name: Container image
 
 on:
   push:
-    branches: [main]
+    branches: [main, auditir-v0.2.1-labels]
   # A published GitHub release also publishes the image as `<version>`, `<major>.<minor>` and `latest`.
   release:
     types: [published]
@@ -186,7 +186,7 @@ jobs:
           grep -E 'Platform:[[:space:]]+linux/amd64' manifest.txt
           grep -E 'Platform:[[:space:]]+linux/arm64' manifest.txt
       - name: Deploy to Coolify Cloud
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' && github.repository == 'coollabsio/orbit'
         env:
           COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
           COOLIFY_WEBHOOK: ${{ secrets.COOLIFY_WEBHOOK }}
