@@ -202,6 +202,12 @@ struct CreateArgs {
     /// Labels of the task's project, as ids from list_labels.
     #[serde(default)]
     label_ids: Vec<String>,
+    /// RFC 3339 timestamp, such as 2027-01-01T00:00:00Z. Needs due_at and must not be after it.
+    #[schemars(with = "Option<String>")]
+    due_start_at: Option<TimestampMillis>,
+    /// RFC 3339 timestamp, such as 2027-01-01T00:00:00Z.
+    #[schemars(with = "Option<String>")]
+    due_at: Option<TimestampMillis>,
 }
 fn default_priority() -> String {
     "none".into()
@@ -221,6 +227,14 @@ struct UpdateArgs {
     parent_task_id: Option<Option<String>>,
     /// Replaces all labels of the task: ids from list_labels of its project. `[]` removes them.
     label_ids: Option<Vec<String>>,
+    /// RFC 3339 timestamp; `null` clears it. Needs a due date and must not be after it.
+    #[serde(default, deserialize_with = "present")]
+    #[schemars(with = "Option<String>")]
+    due_start_at: Option<Option<TimestampMillis>>,
+    /// RFC 3339 timestamp, such as 2027-01-01T00:00:00Z; `null` clears it.
+    #[serde(default, deserialize_with = "present")]
+    #[schemars(with = "Option<String>")]
+    due_at: Option<Option<TimestampMillis>>,
 }
 /// A field that is present, `null` included: `null` clears the value, a missing field keeps it.
 fn present<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(
@@ -335,12 +349,12 @@ fn tools() -> Vec<Tool> {
     vec![
         write_definition::<CreateArgs>(
             "create_task",
-            "Create a task in an approved project. With parent_task_id, the task is a sub-issue of that task. label_ids come from list_labels.",
+            "Create a task in an approved project. With parent_task_id, the task is a sub-issue of that task. label_ids come from list_labels; due dates are RFC 3339.",
             false,
         ),
         write_definition::<UpdateArgs>(
             "update_task",
-            "Update a task using its current version. parent_task_id moves the task under another task; null detaches it. label_ids replaces all labels. Related task projects must also be approved.",
+            "Update a task using its current version. parent_task_id moves the task under another task; null detaches it. label_ids replaces all labels; null clears a due date. Related task projects must also be approved.",
             true,
         ),
         write_definition::<DeleteArgs>(
@@ -479,8 +493,8 @@ impl TaskTools {
                         assignee_ids: vec![],
                         label_ids,
                         parent_task_id,
-                        due_start_at: None,
-                        due_at: None,
+                        due_start_at: a.due_start_at,
+                        due_at: a.due_at,
                     })
                     .await
                 }
@@ -503,6 +517,8 @@ impl TaskTools {
                         priority: a.priority,
                         label_ids,
                         parent_task_id,
+                        due_start_at: a.due_start_at,
+                        due_at: a.due_at,
                         ..Default::default()
                     };
                     api.update_task(&a.task_id, a.expected_version, patch).await

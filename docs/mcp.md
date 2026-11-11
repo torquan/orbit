@@ -300,10 +300,11 @@ Service-account tokens support tasks only; docs and chat require a personal iden
 | Chat read | `list_conversations`, `list_messages`, `get_thread`, `search_messages` |
 
 Task create takes `project_id`, `status_id`, `title`, optional markdown `description`,
-`priority`, `parent_task_id` (creates a sub-issue) and `label_ids` (labels of the task's
-project, from `list_labels`). Task update takes `task_id`,
+`priority`, `parent_task_id` (creates a sub-issue), `label_ids` (labels of the task's
+project, from `list_labels`), `due_at` and `due_start_at` (RFC 3339; a start needs a due
+date and must not be after it). Task update takes `task_id`,
 `expected_version`, and optional title, description, status, priority, `label_ids` (replaces
-all labels; `[]` removes them) or `parent_task_id`:
+all labels; `[]` removes them), `due_at` and `due_start_at` (`null` clears them) or `parent_task_id`:
 a task ID or identifier moves the task under that task, and `null` detaches it. A task
 cannot become a sub-issue of itself or of its own sub-issues. Delete takes `task_id` and `expected_version` and moves the task subtree
 to the trash for 30 days. With `permanent: true` it deletes the subtree forever instead, with

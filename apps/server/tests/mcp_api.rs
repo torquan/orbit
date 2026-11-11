@@ -1021,6 +1021,68 @@ async fn labels_can_be_listed_set_filtered_and_stay_in_the_grant() {
 }
 
 #[tokio::test]
+async fn due_dates_can_be_set_kept_and_cleared() {
+    let f = Fixture::new().await;
+    sqlx::query("UPDATE api_tokens SET scopes = 'tasks:read tasks:write' WHERE id = $1")
+        .bind(f.token_id.to_string())
+        .execute(f.database.pool())
+        .await
+        .unwrap();
+    let parent = f.tasks.get_task(f.workspace, f.task, f.user).await.unwrap();
+    let created = f
+        .tool(
+            "create_task",
+            json!({"project_id": f.project, "status_id": parent.status_id, "title": "Dated",
+                "due_start_at": "2026-12-01T00:00:00Z", "due_at": "2027-01-01T00:00:00Z"}),
+        )
+        .await;
+    let task = &created["result"]["structuredContent"];
+    assert_eq!(
+        task["due_start_at"], "2026-12-01T00:00:00.000Z",
+        "{created}"
+    );
+    assert_eq!(task["due_at"], "2027-01-01T00:00:00.000Z", "{created}");
+    let task_id: Id = task["id"].as_str().unwrap().parse().unwrap();
+    let invalid = f
+        .tool(
+            "create_task",
+            json!({"project_id": f.project, "status_id": parent.status_id, "title": "Bad", "due_at": "1.1.2027"}),
+        )
+        .await;
+    assert!(
+        invalid.get("error").is_some() || invalid["result"]["isError"] == true,
+        "{invalid}"
+    );
+
+    let version = |f: &Fixture| {
+        let tasks = f.tasks.clone();
+        let (workspace, user) = (f.workspace, f.user);
+        async move { token_version(&tasks.get_task(workspace, task_id, user).await.unwrap()) }
+    };
+    let renamed = f
+        .tool(
+            "update_task",
+            json!({"task_id": task_id, "expected_version": version(&f).await, "title": "Renamed"}),
+        )
+        .await;
+    assert_eq!(
+        renamed["result"]["structuredContent"]["due_at"], "2027-01-01T00:00:00.000Z",
+        "{renamed}"
+    );
+    let cleared = f
+        .tool(
+            "update_task",
+            json!({"task_id": task_id, "expected_version": version(&f).await, "due_start_at": null, "due_at": null}),
+        )
+        .await;
+    let task = &cleared["result"]["structuredContent"];
+    assert!(
+        task["due_at"].is_null() && task["due_start_at"].is_null(),
+        "{cleared}"
+    );
+}
+
+#[tokio::test]
 async fn docs_and_chat_require_explicit_scopes_and_doc_writes_need_docs_write() {
     use orbit_platform::{
         AttachmentMutationCoordinator, LocalBlobStore, UploadLimits, UploadService,
